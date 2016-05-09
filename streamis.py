@@ -11,28 +11,38 @@ DEFAULT_CONFIG = {
 
 
 def make_app(config=DEFAULT_CONFIG):
-    redis = None
+    """Factory function for creating the aiohttp application."""
+    # Helper to manage connecting to the database
+    class Connection:
+        _redis = None
 
-    async def redis_connect():
-        global redis
-        if redis is None:
-            redis = await aioredis.create_connection(
-                (config['redis']['host'], config['redis']['port']))
-        return redis
+        @classmethod
+        async def redis(cls, force_reconnect=False):
+            if cls._redis is None or force_reconnect:
+                cls._redis = await aioredis.create_redis(
+                    (config['redis']['host'], config['redis']['port']))
+            return cls._redis
 
     # see https://gist.github.com/gdamjan/3ed70de225c05d267511
     async def sse_handler(request):
         """EventSource handler."""
-        if request.headers.get('accept') != 'text/event-stream':
-            return web.Response(status=406)
+        channel = request.match_info['channel']
+        # if request.headers.get('accept') != 'text/event-stream':
+        #     return web.Response(status=406)
         stream = web.StreamResponse()
-        stream.headers['Content-Type'] = 'text/event-stream'
-        stream.headers['Cache-Control'] = 'no-cache'
-        stream.header['Connection'] = 'keep-alive'
-        stream.enable_chunked_encoding()
+        stream.content_type = 'text/event-stream'
+        # stream.headers['Cache-Control'] = 'no-cache'
+        # stream.header['Connection'] = 'keep-alive'
         await stream.prepare(request)
 
-        # get messages from redis here
+        redis = await Connection.redis()
+        channel, = await redis.subscribe(channel)
+        while True:
+            msg = await channel.get(encoding='utf-8')
+            if msg is None:
+                break  # TODO: more graceful
+            else:
+                stream.write(b'data: %s\r\n\r\n' % msg.encode())
 
         await stream.write_eof()
         return stream
@@ -41,3 +51,8 @@ def make_app(config=DEFAULT_CONFIG):
     app.router.add_route('GET', '/{channel}', sse_handler)
 
     return app
+
+
+if __name__ == "__main__":
+    app = make_app()
+    web.run_app(app)
