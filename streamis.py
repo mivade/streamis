@@ -1,5 +1,13 @@
-from aiohttp import web
+import logging
+import asyncio
+from tornado.platform.asyncio import AsyncIOMainLoop
+from tornado import web, log
 import aioredis
+
+AsyncIOMainLoop().install()
+
+log.enable_pretty_logging()
+logger = logging.getLogger('streamis')
 
 DEFAULT_CONFIG = {
     'redis': {
@@ -10,49 +18,84 @@ DEFAULT_CONFIG = {
 }
 
 
-def make_app(config=DEFAULT_CONFIG):
-    """Factory function for creating the aiohttp application."""
-    # Helper to manage connecting to the database
-    class Connection:
-        _redis = None
+class Connection:
+    _redis = None
 
-        @classmethod
-        async def redis(cls, force_reconnect=False):
-            if cls._redis is None or force_reconnect:
-                cls._redis = await aioredis.create_redis(
-                    (config['redis']['host'], config['redis']['port']))
-            return cls._redis
+    @classmethod
+    async def redis(cls, config: dict, force_reconnect=False):
+        if cls._redis is None or force_reconnect:
+            cls._redis = await aioredis.create_redis(
+                (config['redis']['host'], config['redis']['port']))
+        return cls._redis
 
-    # see https://gist.github.com/gdamjan/3ed70de225c05d267511
-    async def sse_handler(request):
-        """EventSource handler."""
-        channel = request.match_info['channel']
-        # if request.headers.get('accept') != 'text/event-stream':
-        #     return web.Response(status=406)
-        stream = web.StreamResponse()
-        stream.content_type = 'text/event-stream'
-        # stream.headers['Cache-Control'] = 'no-cache'
-        # stream.header['Connection'] = 'keep-alive'
-        await stream.prepare(request)
 
-        redis = await Connection.redis()
-        channel, = await redis.subscribe(channel)
-        while True:
-            msg = await channel.get(encoding='utf-8')
-            if msg is None:
-                break  # TODO: more graceful
-            else:
-                stream.write(b'data: %s\r\n\r\n' % msg.encode())
+class Subscription:
+    """Handles subscriptions to Redis PUB/SUB channels."""
+    def __init__(self, redis, channel: str):
+        self._redis = redis
+        self.name = channel
 
-        await stream.write_eof()
-        return stream
+    async def subscribe(self):
+        self.channel, = await self._redis.subscribe(self.name)
 
-    app = web.Application()
-    app.router.add_route('GET', '/{channel}', sse_handler)
+    def __str__(self):
+        return self.name
 
-    return app
+    async def get(self):
+        """Return the next message as it comes in."""
+        msg = await self.channel.get(encoding='utf-8')
+        return msg
+
+
+class SubscriptionManager:
+    """Manages all subscriptions."""
+    def __init__(self, redis_config=DEFAULT_CONFIG):
+        self.redis = None
+        self.redis_config = redis_config
+        self.subscriptions = dict()
+
+    async def connect(self):
+        self.redis = await Connection.redis(self.redis_config)
+
+    async def subscribe(self, channel: str):
+        """Subscribe to a new channel."""
+        if channel in self.subscriptions:
+            return self.subscriptions[channel]
+        subscription = Subscription(self.redis, channel)
+        await subscription.subscribe()
+        self.subscriptions[channel] = subscription
+        return subscription
+
+    def unsubscribe(self, channel: str):
+        """Unsubscribe from a channel."""
+        if channel not in self.subscriptions:
+            logger.warning("Not subscribed to channel '%s'" % channel)
+            return
+        sub = self.subscriptions.pop(channel)
+        del sub
+
+
+class SSEHandler(web.RequestHandler):
+    def initialize(self, manager: SubscriptionManager):
+        self.manager = manager
+
+    async def get(self, channel: str):
+        subscription = await self.manager.subscribe(channel)
+        message = await subscription.get()
+        self.write(message)
 
 
 if __name__ == "__main__":
-    app = make_app()
-    web.run_app(app)
+    port = 8989
+    loop = asyncio.get_event_loop()
+
+    manager = SubscriptionManager()
+    loop.run_until_complete(manager.connect())
+
+    app = web.Application(
+        [(r'/(.*)', SSEHandler, dict(manager=manager))],
+        debug=True
+    )
+    app.listen(port)
+    logger.info('Listening on port %d' % port)
+    loop.run_forever()

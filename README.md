@@ -3,10 +3,10 @@
 **Work in progress**
 
 Subscribe to Redis pubsub channels via HTTP and EventSource. Powered by
-[asyncio][], [aiohttp][], and [aioredis][].
+[asyncio][], [Tornado][], and [aioredis][].
 
 [asyncio]: https://docs.python.org/3/library/asyncio.html
-[aiohttp]: http://aiohttp.readthedocs.io/en/stable/
+[Tornado]: http://www.tornadoweb.org/en/stable/
 [aioredis]: http://aioredis.readthedocs.io/en/latest/
 
 ## Why?
