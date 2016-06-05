@@ -17,6 +17,26 @@ nature of WSGI frameworks such as [Django][] and [Flask][].
 [Django]: https://www.djangoproject.com/
 [Flask]: http://flask.pocoo.org/
 
+## Requirements
+
+* Python >= 3.5
+* Tornado
+* aioredis
+
+## Usage
+
+Install:
+
+```
+$ pip install -e .
+```
+
+Run:
+
+```
+$ python -m streamis
+```
+
 ## See also
 
 Related (and almost certainly better) projects:

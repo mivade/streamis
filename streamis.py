@@ -11,8 +11,6 @@ from tornado import web
 from tornado.iostream import StreamClosedError
 from tornado.options import options, define
 
-__version__ = "0.1.0.dev"
-
 AsyncIOMainLoop().install()
 
 logger = logging.getLogger('streamis')
