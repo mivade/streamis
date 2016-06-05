@@ -1,33 +1,36 @@
+"""Streamis - Subscribe to Redis pubsub channels via HTTP and EventSource."""
+
 import logging
+
 import asyncio
 from asyncio import Queue
-from tornado.platform.asyncio import AsyncIOMainLoop
-from tornado import web, log
-from tornado.iostream import StreamClosedError
 import aioredis
+
+from tornado.platform.asyncio import AsyncIOMainLoop
+from tornado import web
+from tornado.iostream import StreamClosedError
+from tornado.options import options, define
+
+__version__ = "0.1.0.dev"
 
 AsyncIOMainLoop().install()
 
-log.enable_pretty_logging()
 logger = logging.getLogger('streamis')
 
-DEFAULT_CONFIG = {
-    'redis': {
-        'host': 'localhost',
-        'port': 6379,
-        'db': 0
-    }
-}
+define('redis-host', default='localhost', help='Redis server hostname')
+define('redis-port', default=6379, help='Redis server port')
+define('port', default=8989, help='HTTP port to serve on')
+define('debug', default=False, help='Enable debug mode')
 
 
 class Connection:
     _redis = None
 
     @classmethod
-    async def redis(cls, config: dict, force_reconnect=False):
+    async def redis(cls, force_reconnect=False):
         if cls._redis is None or force_reconnect:
-            cls._redis = await aioredis.create_redis(
-                (config['redis']['host'], config['redis']['port']))
+            settings = (options.redis_host, options.redis_port)
+            cls._redis = await aioredis.create_redis(settings)
         return cls._redis
 
 
@@ -69,14 +72,13 @@ class Subscription:
 
 class SubscriptionManager:
     """Manages all subscriptions."""
-    def __init__(self, redis_config=DEFAULT_CONFIG, loop=None):
+    def __init__(self, loop=None):
         self.redis = None
-        self.redis_config = redis_config
         self.subscriptions = dict()
         self.loop = loop or asyncio.get_event_loop()
 
     async def connect(self):
-        self.redis = await Connection.redis(self.redis_config)
+        self.redis = await Connection.redis()
 
     async def subscribe(self, listener, channel: str):
         """Subscribe to a new channel."""
@@ -116,8 +118,8 @@ class SSEHandler(web.RequestHandler):
                 break
 
 
-if __name__ == "__main__":
-    port = 8989
+def main():
+    options.parse_command_line()
     loop = asyncio.get_event_loop()
 
     manager = SubscriptionManager()
@@ -125,8 +127,12 @@ if __name__ == "__main__":
 
     app = web.Application(
         [(r'/(.*)', SSEHandler, dict(manager=manager))],
-        debug=True
+        debug=options.debug
     )
-    app.listen(port)
-    logger.info('Listening on port %d' % port)
+    app.listen(options.port)
+    logger.info('Listening on port %d' % options.port)
     loop.run_forever()
+
+
+if __name__ == "__main__":
+    main()

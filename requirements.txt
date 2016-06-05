@@ -1,0 +1,2 @@
+aioredis==0.2.7
+tornado==4.3

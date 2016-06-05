@@ -1,7 +1,5 @@
 # streamis
 
-**Work in progress**
-
 Subscribe to Redis pubsub channels via HTTP and EventSource. Powered by
 [asyncio][], [Tornado][], and [aioredis][].
 
